@@ -1,0 +1,20 @@
+{
+  "env": "local",
+  "port": 8080,
+  "kafka": {
+    "brokerList": "localhost:9092"
+  },
+  "shovelList": [
+    {
+      "sourceTopicName": "example-topic-name.error",
+      "targetTopicName": "example-topic-name.retry",
+      "poisonedTopicName": "example-topic-name.dead",
+      "groupId": "example-topic-kafka-shovel-grp-id-0",
+      "name": "example-topic-shovel",
+      "autoOffsetReset": "latest",
+      "maxErrorCount": 50,
+      "MessageIntervalInSec": 300
+    }
+  ]
+}
+
