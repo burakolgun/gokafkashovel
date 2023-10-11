@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"sync"
+	"time"
+
 	"github.com/burakolgun/gokafkashovel/constants"
 	"github.com/burakolgun/gokafkashovel/producer"
 	"github.com/burakolgun/gokafkashovel/utils/kafka_utils"
@@ -11,9 +15,6 @@ import (
 	"github.com/hashicorp/go-uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
-	"strconv"
-	"sync"
-	"time"
 )
 
 type Shovel struct {
@@ -27,6 +28,7 @@ type Shovel struct {
 	poisonedTopicName string
 	name              string
 	maxErrorCount     int
+	isCompleted       bool
 }
 
 type Config struct {
@@ -56,8 +58,6 @@ func New(cfg Config) *Shovel {
 }
 
 func (consumer *Shovel) ConsumeWithContext(ctx context.Context, wg *sync.WaitGroup) {
-	//defer consumer.close()
-
 	err := consumer.sourceTopicConsumer.Subscribe(consumer.sourceTopicName, nil)
 
 	if err != nil {
@@ -68,13 +68,23 @@ func (consumer *Shovel) ConsumeWithContext(ctx context.Context, wg *sync.WaitGro
 	go consumer.consumeSourceTopic()
 
 	<-ctx.Done()
+
+	consumer.close()
 	wg.Done()
 }
 
 func (consumer *Shovel) close() {
+	consumer.isCompleted = true
 	consumer.logger.Warn().Msg(fmt.Sprintf("consumer.close: consumer closing... topic: %s", consumer.sourceTopicName))
+	<-time.After(time.Second * 5)
+	err := consumer.sourceTopicConsumer.Pause([]kafka.TopicPartition{{Topic: &consumer.sourceTopicName, Partition: kafka.PartitionAny}})
+	consumer.logger.Warn().Msg(fmt.Sprintf("consumer.close: consumer paused... topic: %s", consumer.sourceTopicName))
+	if err != nil {
+		consumer.logger.Error().Msg(fmt.Sprintf("consumer.closeConsumer: consumer can't paused. err: %s", err.Error()))
+	}
 
-	err := consumer.sourceTopicConsumer.Close()
+	consumer.logger.Warn().Msg(fmt.Sprintf("consumer.close: trying to close... topic: %s", consumer.sourceTopicName))
+	err = consumer.sourceTopicConsumer.Close()
 	if err != nil {
 		if err.Error() == "Operation not allowed on closed client" {
 			consumer.logger.Info().Msg(fmt.Sprintf("consumer.closeConsumer: consumer already closed err: %s", err.Error()))
@@ -88,39 +98,43 @@ func (consumer *Shovel) close() {
 }
 
 func (consumer *Shovel) consumeSourceTopic() {
-
 	for {
-		if consumer.sourceTopicConsumer.IsClosed() == true {
-			fmt.Println("consumer already closed")
-			return
-		}
+		msg, err := consumer.sourceTopicConsumer.ReadMessage(time.Millisecond * 100)
 
-		msg, err := consumer.sourceTopicConsumer.ReadMessage(time.Millisecond * 125)
+		if err != nil {
+			if err.Error() == "Operation not allowed on closed client" {
+				consumer.logger.Warn().Msg("consumer already closed")
+				return
+			} else if !err.(kafka.Error).IsTimeout() {
+				consumer.logger.Error().Msg(fmt.Sprintf("Consumer returned error, err: %s", err.Error()))
+				panic(err)
+			}
+		}
 
 		if err == nil {
 			err := consumer.Process(msg)
 
-			if err != nil && err.Error() == "cycle is completed" {
-				fmt.Println(fmt.Sprintf("%s consumer will close becase cycle is completed", consumer.name))
+			if err != nil && err.Error() == constants.ConsumerClosed {
+				consumer.logger.Info().Msg(fmt.Sprintf("%s consumer will close because cycle is completed \n", consumer.name))
+				return
+			}
+
+			if consumer.isCompleted {
+				consumer.logger.Info().Msg(fmt.Sprintf("%s consume wont continue because consumer is closed \n", consumer.name))
 				return
 			}
 		} else if err.Error() == "Operation not allowed on closed client" {
-			fmt.Println("consumer closed")
+			consumer.logger.Info().Msg("consumer closed")
 			return
 		} else if !err.(kafka.Error).IsTimeout() {
 			consumer.logger.Error().Msg(fmt.Sprintf("Consumer returned error, err: %s", err.Error()))
 			panic(err)
 		}
-
 	}
 }
 
 func (consumer *Shovel) Process(msg *kafka.Message) error {
 	ctx := context.Background()
-	fmt.Println(string(msg.Key))
-	fmt.Println(msg.Headers)
-	fmt.Println("here")
-
 	headers := msg.Headers
 	var err error
 	requestId := kafka_utils.GetFieldByNameFromHeader(headers, constants.RequestIdKey)
@@ -140,7 +154,7 @@ func (consumer *Shovel) Process(msg *kafka.Message) error {
 		if m.Err() != redis.Nil {
 			consumer.producer.Produce(msg.Key, msg.Value, headers, consumer.sourceTopicName)
 			consumer.logger.Warn().Msg("shovel cycle is completed")
-			return errors.New("cycle is completed")
+			return errors.New(constants.ConsumerClosed)
 		}
 
 	}

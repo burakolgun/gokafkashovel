@@ -4,6 +4,9 @@
   "kafka": {
     "brokerList": "localhost:9092"
   },
+  "shovelIntervalInSec": 75,
+  "shovelWaitingIntervalInSec": 30,
+
   "shovelList": [
     {
       "sourceTopicName": "example-topic-name.error",
@@ -12,8 +15,7 @@
       "groupId": "example-topic-kafka-shovel-grp-id-0",
       "name": "example-topic-shovel",
       "autoOffsetReset": "latest",
-      "maxErrorCount": 50,
-      "MessageIntervalInSec": 300
+      "maxErrorCount": 50
     }
   ]
 }

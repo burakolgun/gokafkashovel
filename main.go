@@ -2,13 +2,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/burakolgun/gokafkashovel/startup"
 	"sync"
-)
 
-func init() {
-	go startup.Start()
-}
+	"github.com/burakolgun/gokafkashovel/startup"
+)
 
 func main() {
 
@@ -18,10 +15,10 @@ func main() {
 		}
 	}()
 
-	for true {
+	for {
 		wg := sync.WaitGroup{}
 		wg.Add(1)
-
+		go startup.Start()
 		wg.Wait()
 	}
 }

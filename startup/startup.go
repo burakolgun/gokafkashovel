@@ -3,6 +3,10 @@ package startup
 import (
 	"context"
 	"fmt"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/burakolgun/gogenviper"
 	"github.com/burakolgun/gokafkashovel/producer"
 	"github.com/burakolgun/gokafkashovel/shovel"
@@ -11,9 +15,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/diode"
-	"os"
-	"sync"
-	"time"
 )
 
 func Start() {
@@ -83,18 +84,17 @@ func initRedisClient() {
 }
 
 func shovelManager() {
-	ctx, cancelFn := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancelFn()
-	go runShovel(ctx, cancelFn)
-
-	fmt.Println("<-ctx.Done()")
-	<-time.After(time.Second * 32)
+	fmt.Println("before shovelManager cycle")
+	ctx, cancelFn := context.WithTimeout(context.Background(), time.Second*time.Duration(container.GetCfg().ShovelIntervalInSec))
+	runShovel(ctx, cancelFn)
+	fmt.Println("waiting runShovel()")
+	fmt.Println("after shovelManager cycle")
 	shovelManager()
 }
 func runShovel(ctx context.Context, cancelFn context.CancelFunc) {
 	brokerList := container.GetCfg().Kafka.BrokerList
 
-	var wg sync.WaitGroup
+	shovelWg := sync.WaitGroup{}
 	for _, app := range container.GetCfg().ShovelList {
 		c, err := kafka.NewConsumer(&kafka.ConfigMap{
 			"bootstrap.servers": brokerList,
@@ -118,12 +118,15 @@ func runShovel(ctx context.Context, cancelFn context.CancelFunc) {
 			MaxErrorCount:       app.MaxErrorCount,
 		})
 
-		wg.Add(1)
-		go q.ConsumeWithContext(ctx, &wg)
-		fmt.Println(fmt.Sprintf("%s consumer up", app.Name))
+		shovelWg.Add(1)
+		go q.ConsumeWithContext(ctx, &shovelWg)
+		fmt.Printf("%s consumer up\n", app.Name)
 	}
-	fmt.Println("before print")
-	wg.Wait()
-	fmt.Println("after print")
-	fmt.Println("DONE")
+
+	fmt.Println("before complete the cycle")
+	shovelWg.Wait()
+	fmt.Println("after complete the cycle")
+	fmt.Println("waiting interval starting...")
+	<-time.After(time.Second * time.Duration(container.GetCfg().ShovelWaitingIntervalInSec))
+	fmt.Println("waiting interval completed.")
 }
