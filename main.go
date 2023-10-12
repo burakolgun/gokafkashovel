@@ -15,10 +15,8 @@ func main() {
 		}
 	}()
 
-	for {
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-		go startup.Start()
-		wg.Wait()
-	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go startup.Start()
+	wg.Wait()
 }
