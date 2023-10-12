@@ -14,7 +14,7 @@
       "poisonedTopicName": "example-topic-name.dead",
       "groupId": "example-topic-kafka-shovel-grp-id-0",
       "name": "example-topic-shovel",
-      "autoOffsetReset": "latest",
+      "autoOffsetReset": "earliest",
       "maxErrorCount": 50
     }
   ]

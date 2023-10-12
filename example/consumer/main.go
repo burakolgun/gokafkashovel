@@ -22,7 +22,7 @@ func RunConsumer() {
 	c.SubscribeTopics([]string{"example-topic-name.retry"}, nil)
 
 	run := true
-	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "redpanda:29092"})
 
 	if err != nil {
 		panic(err)

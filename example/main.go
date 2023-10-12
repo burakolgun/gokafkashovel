@@ -15,7 +15,7 @@ func main() {
 	wg.Add(1)
 	go RunConsumer()
 
-	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "redpanda:29092"})
 	if err != nil {
 		panic(err)
 	}
@@ -37,7 +37,7 @@ func main() {
 	}()
 
 	topic := "example-topic-name.error"
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 5000; i++ {
 
 		p.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
@@ -54,7 +54,7 @@ func main() {
 func RunConsumer() {
 
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
-		"bootstrap.servers": "localhost",
+		"bootstrap.servers": "redpanda:29092",
 		"group.id":          "example-group",
 		"auto.offset.reset": "earliest",
 	})
@@ -66,7 +66,7 @@ func RunConsumer() {
 	c.SubscribeTopics([]string{"example-topic-name.retry"}, nil)
 
 	run := true
-	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "redpanda:29092"})
 
 	if err != nil {
 		panic(err)
