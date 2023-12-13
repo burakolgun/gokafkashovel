@@ -85,17 +85,17 @@ func initRedisClient() {
 
 func shovelManager() {
 	fmt.Println("before shovelManager cycle")
-	ctx, cancelFn := context.WithTimeout(context.Background(), time.Second*time.Duration(container.GetCfg().ShovelIntervalInSec))
-	runShovel(ctx, cancelFn)
+	runShovel()
 	fmt.Println("waiting runShovel()")
 	fmt.Println("after shovelManager cycle")
 	shovelManager()
 }
-func runShovel(ctx context.Context, cancelFn context.CancelFunc) {
+func runShovel() {
 	brokerList := container.GetCfg().Kafka.BrokerList
 
 	shovelWg := sync.WaitGroup{}
 	for _, app := range container.GetCfg().ShovelList {
+
 		c, err := kafka.NewConsumer(&kafka.ConfigMap{
 			"bootstrap.servers": brokerList,
 			"group.id":          app.GroupId,
@@ -119,8 +119,37 @@ func runShovel(ctx context.Context, cancelFn context.CancelFunc) {
 		})
 
 		shovelWg.Add(1)
-		go q.ConsumeWithContext(ctx, &shovelWg)
-		fmt.Printf("%s consumer up\n", app.Name)
+		go q.ConsumeWithTimeout(&shovelWg, time.Second*time.Duration(container.GetCfg().ShovelIntervalInSec))
+		fmt.Printf("%s consumer up\n", app.SourceTopicName)
+
+		if app.IsPoisonedTopicCycleOpen {
+			c, err := kafka.NewConsumer(&kafka.ConfigMap{
+				"bootstrap.servers": brokerList,
+				"group.id":          app.GroupId,
+				"auto.offset.reset": app.AutoOffsetReset,
+			})
+
+			if err != nil {
+				panic(err)
+			}
+
+			p := shovel.New(shovel.Config{
+				SourceTopicConsumer: c,
+				Logger:              container.GetLogger(),
+				Rdb:                 container.GetRedisClient(),
+				SourceTopicName:     app.PoisonedTopicName,
+				TargetTopicName:     app.SourceTopicName,
+				PoisonedTopicName:   app.PoisonedTopicName,
+				Producer:            container.GetCommonProducer(),
+				Name:                app.Name,
+				MaxErrorCount:       app.MaxErrorCount,
+				IsPoisonedTopic:     true,
+			})
+
+			shovelWg.Add(1)
+			go p.ConsumeWithTimeout(&shovelWg, time.Second*time.Duration(container.GetCfg().ShovelIntervalInSec))
+			fmt.Printf("%s poisoned consumer up\n", app.PoisonedTopicName)
+		}
 	}
 
 	fmt.Println("before complete the cycle")

@@ -2,7 +2,6 @@ package shovel
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -28,6 +27,7 @@ type Shovel struct {
 	poisonedTopicName string
 	name              string
 	maxErrorCount     int
+	isPoisonedTopic   bool
 	isCompleted       bool
 }
 
@@ -41,6 +41,7 @@ type Config struct {
 	PoisonedTopicName   string
 	Name                string
 	MaxErrorCount       int
+	IsPoisonedTopic     bool
 }
 
 func New(cfg Config) *Shovel {
@@ -54,22 +55,27 @@ func New(cfg Config) *Shovel {
 		producer:            cfg.Producer,
 		name:                cfg.Name,
 		maxErrorCount:       cfg.MaxErrorCount,
+		isPoisonedTopic:     cfg.IsPoisonedTopic,
 	}
 }
 
-func (consumer *Shovel) ConsumeWithContext(ctx context.Context, wg *sync.WaitGroup) {
-	err := consumer.sourceTopicConsumer.Subscribe(consumer.sourceTopicName, nil)
+func (consumer *Shovel) ConsumeWithTimeout(wg *sync.WaitGroup, timeout time.Duration) {
+	ticker := time.NewTicker(timeout)
 
+	err := consumer.sourceTopicConsumer.Subscribe(consumer.sourceTopicName, nil)
 	if err != nil {
-		consumer.logger.Error().Msg(fmt.Sprintf("%s: could not subscribed to topic: %v err:%v", consumer.name, consumer.sourceTopicName, err))
+		consumer.logger.Error().Msg(fmt.Sprintf("%s: could not subscribe to topic: %v err:%v", consumer.name, consumer.sourceTopicName, err))
 		panic(err)
 	}
 
 	go consumer.consumeSourceTopic()
 
-	<-ctx.Done()
+	<-ticker.C
 
 	consumer.close()
+	fmt.Printf("before wg.Done() %s\n", consumer.sourceTopicName)
+	<-time.After(time.Second * 10)
+	fmt.Printf("after wg.Done() %s\n", consumer.sourceTopicName)
 	wg.Done()
 }
 
@@ -77,14 +83,9 @@ func (consumer *Shovel) close() {
 	consumer.isCompleted = true
 	consumer.logger.Warn().Msg(fmt.Sprintf("consumer.close: consumer closing... topic: %s", consumer.sourceTopicName))
 	<-time.After(time.Second * 5)
-	err := consumer.sourceTopicConsumer.Pause([]kafka.TopicPartition{{Topic: &consumer.sourceTopicName, Partition: kafka.PartitionAny}})
-	consumer.logger.Warn().Msg(fmt.Sprintf("consumer.close: consumer paused... topic: %s", consumer.sourceTopicName))
-	if err != nil {
-		consumer.logger.Error().Msg(fmt.Sprintf("consumer.closeConsumer: consumer can't paused. err: %s", err.Error()))
-	}
 
 	consumer.logger.Warn().Msg(fmt.Sprintf("consumer.close: trying to close... topic: %s", consumer.sourceTopicName))
-	err = consumer.sourceTopicConsumer.Close()
+	err := consumer.sourceTopicConsumer.Close()
 	if err != nil {
 		if err.Error() == "Operation not allowed on closed client" {
 			consumer.logger.Info().Msg(fmt.Sprintf("consumer.closeConsumer: consumer already closed err: %s", err.Error()))
@@ -99,42 +100,47 @@ func (consumer *Shovel) close() {
 
 func (consumer *Shovel) consumeSourceTopic() {
 	for {
-		msg, err := consumer.sourceTopicConsumer.ReadMessage(time.Millisecond * 100)
-
-		if err != nil {
-			if err.Error() == "Operation not allowed on closed client" {
-				consumer.logger.Warn().Msg("consumer already closed")
-				return
-			} else if !err.(kafka.Error).IsTimeout() {
-				consumer.logger.Error().Msg(fmt.Sprintf("Consumer returned error, err: %s", err.Error()))
-				panic(err)
-			}
+		if consumer.isCompleted {
+			consumer.logger.Info().Msg(fmt.Sprintf("%s consume wont continue because consumer cycle is completed \n", consumer.name))
+			return
 		}
 
-		if err == nil {
-			err := consumer.Process(msg)
+		msg, err := consumer.sourceTopicConsumer.ReadMessage(time.Millisecond * 500)
 
-			if err != nil && err.Error() == constants.ConsumerClosed {
+		if err != nil {
+			if err.(kafka.Error).Code() == kafka.ErrTimedOut {
+				continue
+			} else if err.Error() == "Operation not allowed on closed client" {
+				consumer.logger.Warn().Msg("consumer already closed")
+				return
+			} else if err.Error() == "Operation not allowed on closed client" {
+				consumer.logger.Warn().Msg("consumer already closed")
+				return
+			}
+
+			consumer.logger.Error().Msg(fmt.Sprintf("Consumer returned error, err: %s", err.Error()))
+			panic(err)
+
+		}
+
+		fmt.Println("here3")
+		err = consumer.Process(msg)
+
+		if err != nil {
+			if err.Error() == constants.ConsumerClosed {
 				consumer.logger.Info().Msg(fmt.Sprintf("%s consumer will close because cycle is completed \n", consumer.name))
 				return
 			}
 
-			if consumer.isCompleted {
-				consumer.logger.Info().Msg(fmt.Sprintf("%s consume wont continue because consumer is closed \n", consumer.name))
-				return
-			}
-		} else if err.Error() == "Operation not allowed on closed client" {
-			consumer.logger.Info().Msg("consumer closed")
-			return
-		} else if !err.(kafka.Error).IsTimeout() {
-			consumer.logger.Error().Msg(fmt.Sprintf("Consumer returned error, err: %s", err.Error()))
+			consumer.logger.Error().Msg(fmt.Sprintf("consumer returned error, err: %s", err.Error()))
 			panic(err)
 		}
+
+		fmt.Println("here1")
 	}
 }
 
 func (consumer *Shovel) Process(msg *kafka.Message) error {
-	ctx := context.Background()
 	headers := msg.Headers
 	var err error
 	requestId := kafka_utils.GetFieldByNameFromHeader(headers, constants.RequestIdKey)
@@ -149,35 +155,40 @@ func (consumer *Shovel) Process(msg *kafka.Message) error {
 		consumer.logger.Warn().Msg(fmt.Sprintf("requestID not found, key: %s, topic: %s", msg.Key, *msg.TopicPartition.Topic))
 		headers = kafka_utils.AddFieldToHeaderByFieldName(headers, constants.RequestIdKey, requestId)
 	} else {
-		m := consumer.rdb.Get(ctx, fmt.Sprintf("%s-%s", consumer.name, requestId))
+		m := consumer.rdb.Get(context.Background(), fmt.Sprintf("%s-%s", consumer.name, requestId))
 
 		if m.Err() != redis.Nil {
 			consumer.producer.Produce(msg.Key, msg.Value, headers, consumer.sourceTopicName)
 			consumer.logger.Warn().Msg("shovel cycle is completed")
-			return errors.New(constants.ConsumerClosed)
+			consumer.isCompleted = true
 		}
 
 	}
 
-	headers, errorCount := increaseErrorCount(headers)
+	headers, errorCount := increaseKafkaHeaderCountByKey(headers, constants.KafkaErrorCountKey, constants.KafkaErrorCountDefaultValue)
 
 	if errorCount > consumer.maxErrorCount {
-		consumer.producer.Produce(msg.Key, msg.Value, headers, consumer.poisonedTopicName)
-		return err
+		if !consumer.isPoisonedTopic {
+			consumer.producer.Produce(msg.Key, msg.Value, headers, consumer.poisonedTopicName)
+			return err
+		}
+
+		headers, _ = increaseKafkaHeaderCountByKey(headers, constants.KafkaPoisonedTopicCycleCountKey, constants.KafkaPosisonedTopicCycleDefaultValue)
+		headers = kafka_utils.AddFieldToHeaderByFieldName(headers, constants.KafkaErrorCountKey, strconv.Itoa(constants.KafkaErrorCountDefaultValue))
 	}
 
-	consumer.rdb.Set(context.Background(), fmt.Sprintf("%s-%s", consumer.name, kafka_utils.GetFieldByNameFromHeader(headers, constants.RequestIdKey)), kafka_utils.GetFieldByNameFromHeader(headers, constants.RequestIdKey), time.Second*59).Err()
+	consumer.rdb.Set(context.Background(), fmt.Sprintf("%s-%s", consumer.name, kafka_utils.GetFieldByNameFromHeader(headers, constants.RequestIdKey)), kafka_utils.GetFieldByNameFromHeader(headers, constants.RequestIdKey), time.Second*1).Err()
 	consumer.producer.Produce(msg.Key, msg.Value, headers, consumer.targetTopicName)
 	return err
 }
 
-func increaseErrorCount(headers []kafka.Header) ([]kafka.Header, int) {
+func increaseKafkaHeaderCountByKey(headers []kafka.Header, headerKey string, defaultValue int) ([]kafka.Header, int) {
 	isFound := false
-	count := 1
+	count := defaultValue
 	var err error
 
 	for i, header := range headers {
-		if header.Key == constants.KafkaErrorCountKey {
+		if header.Key == headerKey {
 			isFound = true
 			count, err = strconv.Atoi(string(header.Value))
 
@@ -185,12 +196,12 @@ func increaseErrorCount(headers []kafka.Header) ([]kafka.Header, int) {
 				panic(err)
 			}
 
-			headers[i] = kafka.Header{Key: constants.KafkaErrorCountKey, Value: []byte(strconv.Itoa(count + 1))}
+			headers[i] = kafka.Header{Key: headerKey, Value: []byte(strconv.Itoa(count + 1))}
 		}
 	}
 
 	if !isFound {
-		headers = kafka_utils.AddFieldToHeaderByFieldName(headers, constants.KafkaErrorCountKey, strconv.Itoa(count))
+		headers = kafka_utils.AddFieldToHeaderByFieldName(headers, headerKey, strconv.Itoa(count))
 	}
 
 	return headers, count

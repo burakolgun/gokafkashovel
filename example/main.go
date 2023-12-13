@@ -37,7 +37,7 @@ func main() {
 	}()
 
 	topic := "example-topic-name.error"
-	for i := 0; i < 5000; i++ {
+	for i := 0; i < 1; i++ {
 
 		p.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
