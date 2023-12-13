@@ -11,13 +11,14 @@ type Config struct {
 }
 
 type Shovel struct {
-	SourceTopicName   string `json:"sourceTopicName"`
-	TargetTopicName   string `json:"targetTopicName"`
-	PoisonedTopicName string `json:"poisonedTopicName"`
-	Name              string `json:"name"`
-	GroupId           string `json:"groupId"`
-	AutoOffsetReset   string `json:"autoOffsetReset"`
-	MaxErrorCount     int    `json:"errorCount"`
+	SourceTopicName          string `json:"sourceTopicName"`
+	TargetTopicName          string `json:"targetTopicName"`
+	PoisonedTopicName        string `json:"poisonedTopicName"`
+	Name                     string `json:"name"`
+	GroupId                  string `json:"groupId"`
+	AutoOffsetReset          string `json:"autoOffsetReset"`
+	MaxErrorCount            int    `json:"errorCount"`
+	IsPoisonedTopicCycleOpen bool   `json:"isPoisonedTopicCycleOpen"`
 }
 
 type Kafka struct {

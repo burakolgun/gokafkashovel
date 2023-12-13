@@ -4,19 +4,29 @@
   "kafka": {
     "brokerList": "localhost:9092"
   },
-  "shovelIntervalInSec": 75,
+  "shovelIntervalInSec": 60,
   "shovelWaitingIntervalInSec": 30,
 
   "shovelList": [
     {
       "sourceTopicName": "example-topic-name.error",
       "targetTopicName": "example-topic-name.retry",
-      "poisonedTopicName": "example-topic-name.dead",
-      "groupId": "example-topic-kafka-shovel-grp-id-0",
+      "poisonedTopicName": "example-topic-name.poisoned",
+      "groupId": "example-topic-kafka-shovel-grp-id-8",
       "name": "example-topic-shovel",
       "autoOffsetReset": "earliest",
-      "maxErrorCount": 50
+      "maxErrorCount": 15,
+      "isPoisonedTopicCycleOpen": false
+    },
+    {
+      "sourceTopicName": "example-topic-name.retry",
+      "targetTopicName": "example-topic-name.error",
+      "poisonedTopicName": "example-topic-name.poisoned",
+      "groupId": "example-topic-kafka-shovel-grp-id-8",
+      "name": "example-topic-shovel",
+      "autoOffsetReset": "earliest",
+      "maxErrorCount": 15,
+      "isPoisonedTopicCycleOpen": false
     }
   ]
 }
-

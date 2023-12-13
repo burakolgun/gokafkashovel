@@ -105,13 +105,13 @@ services:
     networks:
       - networkName   
 
-  example-retryer-app:
-    build: ./example
-    depends_on:
-      - redpanda
+  # example-retryer-app:
+  #   build: ./example
+  #   depends_on:
+  #     - redpanda
 
-    networks:
-      - networkName
+  #   networks:
+  #     - networkName
 
 
 networks:

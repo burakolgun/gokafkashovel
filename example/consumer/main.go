@@ -22,7 +22,7 @@ func RunConsumer() {
 	c.SubscribeTopics([]string{"example-topic-name.retry"}, nil)
 
 	run := true
-	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "redpanda:29092"})
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost:29092"})
 
 	if err != nil {
 		panic(err)
@@ -47,4 +47,30 @@ func RunConsumer() {
 	}
 
 	c.Close()
+}
+
+func RunConsumerObserver() {
+
+	c, err := kafka.NewConsumer(&kafka.ConfigMap{
+		"bootstrap.servers": "localhost",
+		"group.id":          "example-group-observer",
+		"auto.offset.reset": "earliest",
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	c.SubscribeTopics([]string{"example-topic-name.retry", "example-topic-name.err", "example-topic-name.dead"}, nil)
+
+	for {
+		msg, err := c.ReadMessage(time.Second)
+		if err == nil {
+			fmt.Printf("Message on %s: %s\n", msg.TopicPartition, string(msg.Value))
+			time.Sleep(time.Second * 1)
+
+		} else if !err.(kafka.Error).IsTimeout() {
+			fmt.Printf("Consumer error: %v (%v)\n", err, msg)
+		}
+	}
 }
