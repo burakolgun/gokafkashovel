@@ -123,7 +123,6 @@ func (consumer *Shovel) consumeSourceTopic() {
 
 		}
 
-		fmt.Println("here3")
 		err = consumer.Process(msg)
 
 		if err != nil {
